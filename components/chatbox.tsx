@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1060,7 +1061,7 @@ export function Chatbox() {
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Type your message..."
-                className="pr-12"
+                className="pr-12 h-10"
               />
             )}
             <Button
@@ -1086,8 +1087,7 @@ export function Chatbox() {
           </div>
           <Button
             onClick={handleSendMessage}
-            size="sm"
-            className={`p-3 shrink-0 hover:opacity-90 transition-all duration-200 ${
+            className={`h-10 px-4 shrink-0 hover:opacity-90 transition-all duration-200 ${
               isRecording ? "bg-red-500 hover:bg-red-600" : ""
             }`}
             style={{
@@ -1103,6 +1103,18 @@ export function Chatbox() {
               <Send className="h-4 w-4" />
             )}
           </Button>
+        </div>
+
+        {/* Powered by section */}
+        <div className="flex items-center justify-center gap-2 mt-3 text-xs text-gray-500">
+          <span>powered by</span>
+          <Image
+            src="/aistra_logo.svg"
+            alt="Aistra AI"
+            width={16}
+            height={16}
+            className="h-4 w-auto"
+          />
         </div>
       </div>
     </div>
