@@ -13,7 +13,6 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        timeout: 30000,
       }
     );
 

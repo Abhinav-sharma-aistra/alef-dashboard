@@ -98,6 +98,34 @@ export function Chatbox() {
     };
   }, []);
 
+  // Helper function to build conversation history as text string
+  const buildConversationHistory = (): string => {
+    return messages
+      .filter((msg) => !msg.audioData) // Exclude voice messages for now
+      .map((msg) => {
+        if (msg.sender === "user") {
+          return `User: ${msg.content}`;
+        } else {
+          // For assistant messages, include main content but exclude image data
+          let content = msg.content;
+
+          // Add insights if available (but no images)
+          if (msg.apiData?.insights) {
+            content += `\n\nInsights: ${msg.apiData.insights}`;
+          }
+
+          // Add data results summary if available
+          if (msg.apiData?.results && msg.apiData.results.length > 0) {
+            const resultSummary = `Data returned ${msg.apiData.results.length} records`;
+            content += `\n\nData: ${resultSummary}`;
+          }
+
+          return `Assistant: ${content}`;
+        }
+      })
+      .join("\n\n");
+  };
+
   const queryAPI = async (question: string): Promise<APIResponse | null> => {
     let progressInterval: NodeJS.Timeout;
     let currentStage = 0;
@@ -138,17 +166,19 @@ export function Chatbox() {
         });
       }, 1500); // Update every 1.5 seconds
 
+      const conversationHistory = buildConversationHistory();
+
       const response = await axios.post(
         "/api/bi/query",
         {
           question: question,
+          conversation_history: conversationHistory,
         },
         {
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          timeout: 30000,
         }
       );
 
