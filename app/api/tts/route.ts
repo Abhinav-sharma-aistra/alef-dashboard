@@ -7,7 +7,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export async function POST(request: NextRequest) {
   try {
-    const { text, voice_id = "pNInz6obpgDQGcFmaJgB" } = await request.json();
+    const { text, voice_id = "ZTWUZx6Q4pIcdl79Kctt" } = await request.json();
 
     if (!text) {
       return NextResponse.json({ error: "Text is required" }, { status: 400 });
