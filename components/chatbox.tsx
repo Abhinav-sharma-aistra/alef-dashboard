@@ -9,7 +9,15 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, Mic, Play, Download, CheckCircle } from "lucide-react";
+import {
+  Send,
+  Mic,
+  Play,
+  Download,
+  CheckCircle,
+  Volume2,
+  Pause,
+} from "lucide-react";
 
 type APIResponse = {
   sql_query?: string;
@@ -64,6 +72,17 @@ export function Chatbox() {
   const [audioLevels, setAudioLevels] = useState<number[]>([
     2, 4, 3, 8, 6, 4, 7, 3, 5, 9, 2, 6,
   ]);
+
+  // TTS state
+  const isTTSEnabled = true; // Always enabled since controls are in insights
+  const [currentAudio, setCurrentAudio] = useState<HTMLAudioElement | null>(
+    null
+  );
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentSpeakingMessageId, setCurrentSpeakingMessageId] = useState<
+    number | null
+  >(null);
+
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -96,8 +115,123 @@ export function Chatbox() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
+      // Cleanup TTS audio
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = "";
+      }
     };
-  }, []);
+  }, [currentAudio]);
+
+  // TTS Functionality
+
+  const speakText = async (text: string, messageId?: number) => {
+    if (!isTTSEnabled) return;
+
+    try {
+      // Stop any currently playing audio
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = "";
+      }
+
+      // Set loading state immediately
+      setIsPlaying(true);
+      setCurrentSpeakingMessageId(messageId || null);
+
+      // Clean markdown formatting for better TTS
+      const cleanedText = cleanMarkdownForTTS(text);
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: cleanedText }),
+      });
+
+      if (!response.ok) {
+        throw new Error("TTS request failed");
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio();
+
+      // Set audio properties for faster playback
+      audio.preload = "auto";
+      audio.volume = 0.8;
+
+      setCurrentAudio(audio);
+
+      // Setup event handlers before setting src
+      audio.oncanplaythrough = () => {
+        // Audio is ready, play immediately
+        audio.play().catch(console.error);
+      };
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      // Set src last to trigger loading
+      audio.src = audioUrl;
+    } catch (error) {
+      console.error("TTS Error:", error);
+      setIsPlaying(false);
+      setCurrentAudio(null);
+      setCurrentSpeakingMessageId(null);
+    }
+  };
+
+  const stopTTS = () => {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.src = "";
+      setCurrentAudio(null);
+    }
+    setIsPlaying(false);
+    setCurrentSpeakingMessageId(null);
+  };
+
+  // Function to clean markdown formatting for TTS
+  const cleanMarkdownForTTS = (text: string): string => {
+    return (
+      text
+        // Remove markdown headers
+        .replace(/#{1,6}\s+/g, "")
+        // Remove markdown bold/italic
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/\*([^*]+)\*/g, "$1")
+        .replace(/__([^_]+)__/g, "$1")
+        .replace(/_([^_]+)_/g, "$1")
+        // Remove markdown links [text](url)
+        .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+        // Remove markdown code blocks
+        .replace(/```[^`]*```/g, "")
+        .replace(/`([^`]+)`/g, "$1")
+        // Remove markdown lists
+        .replace(/^\s*[-*+]\s+/gm, "")
+        .replace(/^\s*\d+\.\s+/gm, "")
+        // Remove blockquotes
+        .replace(/^\s*>\s+/gm, "")
+        // Remove extra whitespace and newlines
+        .replace(/\n{2,}/g, ". ")
+        .replace(/\n/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim()
+    );
+  };
 
   // Helper function to build conversation history as text string
   const buildConversationHistory = (): string => {
@@ -129,6 +263,7 @@ export function Chatbox() {
 
   const queryAPI = async (question: string): Promise<APIResponse | null> => {
     let progressInterval: NodeJS.Timeout;
+    let speechInterval: NodeJS.Timeout;
     let currentStage = 0;
     const stages = [
       "Establishing connection to data servers...",
@@ -137,10 +272,37 @@ export function Chatbox() {
       "Finalizing results and preparing response...",
     ];
 
+    const detailedSteps = [
+      "Starting to process your request",
+      "Connecting to the data warehouse",
+      "Analyzing your question and context",
+      "Running database queries",
+      "Processing the retrieved data",
+      "Applying business intelligence algorithms",
+      "Generating comprehensive insights",
+      "Formatting the results for you",
+      "Almost finished with the analysis",
+    ];
+
+    let currentStepIndex = 0;
+
     try {
       // Start with first stage
       setLoadingProgress(10);
       setProcessingStage(stages[0]);
+
+      // Speak the first step immediately
+      if (isTTSEnabled) {
+        speakText(detailedSteps[0]);
+      }
+
+      // Speak detailed steps every 3 seconds
+      speechInterval = setInterval(() => {
+        if (isTTSEnabled && currentStepIndex < detailedSteps.length - 1) {
+          currentStepIndex++;
+          speakText(detailedSteps[currentStepIndex]);
+        }
+      }, 3000);
 
       // Update progress every 1.5 seconds
       progressInterval = setInterval(() => {
@@ -183,16 +345,28 @@ export function Chatbox() {
         }
       );
 
-      // Clear the interval and complete progress
+      // Clear the intervals and complete progress
       clearInterval(progressInterval);
+      clearInterval(speechInterval);
       setLoadingProgress(100);
       setProcessingStage("✅ Complete!");
 
+      // Stop any ongoing TTS and announce completion
+      if (isTTSEnabled) {
+        stopTTS();
+        setTimeout(() => {
+          speakText("Analysis complete, presenting your insights now");
+        }, 500);
+      }
+
       return response.data;
     } catch (error) {
-      // Clear interval on error
+      // Clear intervals on error
       if (progressInterval!) {
         clearInterval(progressInterval);
+      }
+      if (speechInterval!) {
+        clearInterval(speechInterval);
       }
       if (axios.isAxiosError(error)) {
         if (error.code === "ECONNABORTED") {
@@ -362,7 +536,19 @@ export function Chatbox() {
       }
 
       // Stream the response text
+      const assistantMessageId = messages.length + 2;
       await streamResponse(assistantContent, apiResponse || undefined);
+
+      // Speak the insights if available (after streaming is complete)
+      if (apiResponse?.insights && isTTSEnabled) {
+        // Stop any current filler message
+        stopTTS();
+
+        // Wait a moment before speaking insights
+        setTimeout(() => {
+          speakText(apiResponse.insights!, assistantMessageId);
+        }, 2000); // Wait longer for streaming to complete
+      }
     } catch (error) {
       console.error("Error processing audio:", error);
 
@@ -489,10 +675,23 @@ export function Chatbox() {
       apiData: apiResponse || undefined,
     };
 
+    const messageId = assistantMessage.id;
+
     setMessages((prev) => [...prev, assistantMessage]);
     setIsTyping(false);
     setLoadingProgress(0);
     setProcessingStage("");
+
+    // Speak the insights if available
+    if (apiResponse?.insights && isTTSEnabled) {
+      // Stop any current filler message
+      stopTTS();
+
+      // Wait a moment before speaking insights
+      setTimeout(() => {
+        speakText(apiResponse.insights!, messageId);
+      }, 1000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -710,12 +909,64 @@ export function Chatbox() {
                             borderColor: "#b6735c",
                           }}
                         >
-                          <h4
-                            className="font-semibold text-sm mb-3 flex items-center gap-2"
+                          <div
+                            className="font-semibold text-sm mb-3 flex items-center justify-between"
                             style={{ color: "#333F48" }}
                           >
-                            💡 Insights
-                          </h4>
+                            <div className="flex items-center gap-2">
+                              💡 Insights
+                            </div>
+
+                            {/* TTS Controls for this insights section */}
+                            <div className="flex items-center gap-2">
+                              {currentSpeakingMessageId === message.id &&
+                              isPlaying ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1">
+                                    <div className="w-1 h-3 bg-blue-500 rounded animate-pulse"></div>
+                                    <div
+                                      className="w-1 h-4 bg-blue-500 rounded animate-pulse"
+                                      style={{ animationDelay: "0.1s" }}
+                                    ></div>
+                                    <div
+                                      className="w-1 h-3 bg-blue-500 rounded animate-pulse"
+                                      style={{ animationDelay: "0.2s" }}
+                                    ></div>
+                                  </div>
+                                  <span className="text-xs text-blue-600 animate-pulse">
+                                    Speaking...
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="p-1 h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                    onClick={stopTTS}
+                                    title="Stop speaking"
+                                  >
+                                    <Pause className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                isTTSEnabled && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="p-1 h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                    onClick={() =>
+                                      message.apiData?.insights &&
+                                      speakText(
+                                        message.apiData.insights,
+                                        message.id
+                                      )
+                                    }
+                                    title="Listen to insights"
+                                  >
+                                    <Volume2 className="h-3 w-3" />
+                                  </Button>
+                                )
+                              )}
+                            </div>
+                          </div>
                           <div
                             className="text-sm prose prose-sm max-w-none"
                             style={{ color: "#555" }}
