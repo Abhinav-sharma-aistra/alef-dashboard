@@ -28,6 +28,7 @@ type APIResponse = {
     image_base64?: string;
   };
   insights?: string;
+  preGeneratedAudioUrl?: string;
 };
 
 type Message = {
@@ -82,6 +83,13 @@ export function Chatbox() {
   const [currentSpeakingMessageId, setCurrentSpeakingMessageId] = useState<
     number | null
   >(null);
+  const [ttsTextParts, setTtsTextParts] = useState<{
+    [messageId: number]: {
+      currentPart: number;
+      parts: string[];
+      fullText: string;
+    };
+  }>({});
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -194,6 +202,127 @@ export function Chatbox() {
     }
   };
 
+  // Line-by-line TTS function - one line at a time
+  const speakTextChunked = async (
+    text: string,
+    messageId?: number,
+    startFromPart: number = 0
+  ) => {
+    if (!isTTSEnabled) return;
+
+    try {
+      // Stop any currently playing audio
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = "";
+      }
+
+      // Set loading state immediately
+      setIsPlaying(true);
+      setCurrentSpeakingMessageId(messageId || null);
+
+      // Clean markdown formatting for better TTS
+      const cleanedText = cleanMarkdownForTTS(text);
+
+      // Split text into individual lines, filtering out empty lines
+      const lines = cleanedText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      // If no lines found, split by sentences as fallback
+      if (lines.length === 0 || lines.length === 1) {
+        const sentences = cleanedText
+          .split(/[.!?]+/)
+          .filter((s) => s.trim().length > 10);
+        if (sentences.length > 1) {
+          lines.length = 0;
+          lines.push(...sentences.map((s) => s.trim() + "."));
+        }
+      }
+
+      // Store the lines for this message
+      if (messageId) {
+        setTtsTextParts((prev) => ({
+          ...prev,
+          [messageId]: {
+            currentPart: startFromPart,
+            parts: lines,
+            fullText: cleanedText,
+          },
+        }));
+      }
+
+      // Get the current line to speak
+      const lineToSpeak = lines[startFromPart] || cleanedText;
+
+      console.log(
+        `Speaking line ${startFromPart + 1}/${lines.length}:`,
+        lineToSpeak
+      );
+
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: lineToSpeak }),
+      });
+
+      if (!response.ok) {
+        throw new Error("TTS request failed");
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio();
+
+      // Set audio properties for faster playback
+      audio.preload = "auto";
+      audio.volume = 0.8;
+
+      setCurrentAudio(audio);
+
+      // Setup event handlers before setting src
+      audio.oncanplaythrough = () => {
+        // Audio is ready, play immediately
+        audio.play().catch(console.error);
+      };
+
+      audio.onended = () => {
+        console.log(`Line ${startFromPart + 1}/${lines.length} completed`);
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        console.error("Audio playback error for line:", lineToSpeak);
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      // Set src last to trigger loading
+      audio.src = audioUrl;
+    } catch (error) {
+      console.error("Line-by-line TTS Error:", error);
+      setIsPlaying(false);
+      setCurrentAudio(null);
+      setCurrentSpeakingMessageId(null);
+    }
+  };
+
+  // Continue TTS for remaining parts
+  const continueTTS = (messageId: number) => {
+    const ttsData = ttsTextParts[messageId];
+    if (ttsData && ttsData.currentPart + 1 < ttsData.parts.length) {
+      const nextPart = ttsData.currentPart + 1;
+      speakTextChunked(ttsData.fullText, messageId, nextPart);
+    }
+  };
   const stopTTS = () => {
     if (currentAudio) {
       currentAudio.pause();
@@ -202,6 +331,44 @@ export function Chatbox() {
     }
     setIsPlaying(false);
     setCurrentSpeakingMessageId(null);
+  };
+
+  // Function to play pre-generated audio
+  const playPreGeneratedAudio = (audioUrl: string, messageId?: number) => {
+    try {
+      // Stop any currently playing audio
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = "";
+      }
+
+      const audio = new Audio(audioUrl);
+      audio.volume = 0.8;
+      audio.preload = "auto";
+
+      setCurrentAudio(audio);
+      setIsPlaying(true);
+      setCurrentSpeakingMessageId(messageId || null);
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        console.error("Error playing pre-generated audio");
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        setCurrentSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.play().catch(console.error);
+    } catch (error) {
+      console.error("Error in playPreGeneratedAudio:", error);
+    }
   };
 
   // Function to clean markdown formatting for TTS
@@ -345,19 +512,42 @@ export function Chatbox() {
         }
       );
 
-      // Clear the intervals and complete progress
+      // Clear the intervals but keep progress at 95% to maintain processing illusion
       clearInterval(progressInterval);
       clearInterval(speechInterval);
-      setLoadingProgress(100);
-      setProcessingStage("✅ Complete!");
+      setLoadingProgress(95);
+      setProcessingStage("🎯 Finalizing insights and preparing audio...");
 
-      // Stop any ongoing TTS and announce completion
+      // Stop any ongoing TTS but don't announce completion
       if (isTTSEnabled) {
         stopTTS();
-        setTimeout(() => {
-          speakText("Analysis complete, presenting your insights now");
-        }, 500);
       }
+
+      // Pre-generate TTS for insights during the 2-second delay
+      let preGeneratedAudioUrl = null;
+      if (response.data?.insights && isTTSEnabled) {
+        try {
+          console.log("Pre-generating TTS for insights...");
+          const cleanedInsights = cleanMarkdownForTTS(response.data.insights);
+
+          const ttsResponse = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: cleanedInsights }),
+          });
+
+          if (ttsResponse.ok) {
+            const audioBlob = await ttsResponse.blob();
+            preGeneratedAudioUrl = URL.createObjectURL(audioBlob);
+            console.log("TTS pre-generation completed");
+          }
+        } catch (error) {
+          console.error("Error pre-generating TTS:", error);
+        }
+      }
+
+      // Store the pre-generated audio URL for later use
+      response.data.preGeneratedAudioUrl = preGeneratedAudioUrl;
 
       return response.data;
     } catch (error) {
@@ -539,16 +729,27 @@ export function Chatbox() {
       const assistantMessageId = messages.length + 2;
       await streamResponse(assistantContent, apiResponse || undefined);
 
-      // Speak the insights if available (after streaming is complete)
-      if (apiResponse?.insights && isTTSEnabled) {
-        // Stop any current filler message
-        stopTTS();
+      // Keep loader visible for 2 more seconds while TTS is being prepared
+      // Show finalizing stage during the delay
+      setProcessingStage("🎵 Generating audio and finalizing response...");
+      setLoadingProgress(97); // Keep progressing slowly to show ongoing work
 
-        // Wait a moment before speaking insights
-        setTimeout(() => {
-          speakText(apiResponse.insights!, assistantMessageId);
-        }, 2000); // Wait longer for streaming to complete
-      }
+      setTimeout(() => {
+        setIsTyping(false);
+        setProcessingStage("");
+        setLoadingProgress(0);
+        setRecordingTime(0);
+
+        // Play pre-generated audio if available
+        if (apiResponse?.preGeneratedAudioUrl) {
+          setTimeout(() => {
+            playPreGeneratedAudio(
+              apiResponse.preGeneratedAudioUrl!,
+              assistantMessageId
+            );
+          }, 500); // Small delay before starting audio
+        }
+      }, 2000); // 2-second delay
     } catch (error) {
       console.error("Error processing audio:", error);
 
@@ -564,12 +765,13 @@ export function Chatbox() {
       };
 
       setMessages((prev) => [...prev, errorMessage]);
-    }
 
-    setIsTyping(false);
-    setProcessingStage("");
-    setLoadingProgress(0);
-    setRecordingTime(0);
+      // Handle loader state for error case
+      setIsTyping(false);
+      setProcessingStage("");
+      setLoadingProgress(0);
+      setRecordingTime(0);
+    }
   };
 
   const streamResponse = async (content: string, apiData?: APIResponse) => {
@@ -678,20 +880,24 @@ export function Chatbox() {
     const messageId = assistantMessage.id;
 
     setMessages((prev) => [...prev, assistantMessage]);
-    setIsTyping(false);
-    setLoadingProgress(0);
-    setProcessingStage("");
 
-    // Speak the insights if available
-    if (apiResponse?.insights && isTTSEnabled) {
-      // Stop any current filler message
-      stopTTS();
+    // Keep loader visible for 2 more seconds while TTS is being prepared
+    // Show finalizing stage during the delay
+    setProcessingStage("🎵 Generating audio and finalizing response...");
+    setLoadingProgress(97); // Keep progressing slowly to show ongoing work
 
-      // Wait a moment before speaking insights
-      setTimeout(() => {
-        speakText(apiResponse.insights!, messageId);
-      }, 1000);
-    }
+    setTimeout(() => {
+      setIsTyping(false);
+      setLoadingProgress(0);
+      setProcessingStage("");
+
+      // Play pre-generated audio if available
+      if (apiResponse?.preGeneratedAudioUrl) {
+        setTimeout(() => {
+          playPreGeneratedAudio(apiResponse.preGeneratedAudioUrl!, messageId);
+        }, 500); // Small delay before starting audio
+      }
+    }, 2000); // 2-second delay
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -954,7 +1160,7 @@ export function Chatbox() {
                                     className="p-1 h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
                                     onClick={() =>
                                       message.apiData?.insights &&
-                                      speakText(
+                                      speakTextChunked(
                                         message.apiData.insights,
                                         message.id
                                       )
@@ -1050,6 +1256,30 @@ export function Chatbox() {
                             >
                               {message.apiData.insights}
                             </ReactMarkdown>
+
+                            {/* Continue TTS Button */}
+                            {ttsTextParts[message.id] &&
+                              ttsTextParts[message.id].currentPart + 1 <
+                                ttsTextParts[message.id].parts.length && (
+                                <div className="mt-3 pt-3 border-t border-gray-200">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200"
+                                    onClick={() => continueTTS(message.id)}
+                                    disabled={
+                                      isPlaying &&
+                                      currentSpeakingMessageId === message.id
+                                    }
+                                  >
+                                    <Volume2 className="h-3 w-3 mr-1" />
+                                    Continue Reading Line{" "}
+                                    {ttsTextParts[message.id].currentPart +
+                                      2} /{" "}
+                                    {ttsTextParts[message.id].parts.length}
+                                  </Button>
+                                </div>
+                              )}
                           </div>
                         </div>
                       )}
@@ -1225,11 +1455,11 @@ export function Chatbox() {
                       <span
                         className={
                           loadingProgress >= 100
-                            ? "text-green-500 font-medium"
+                            ? "text-blue-500 font-medium"
                             : ""
                         }
                       >
-                        Complete
+                        Preparing
                       </span>
                     </div>
                   </div>
