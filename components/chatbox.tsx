@@ -9,15 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Send,
-  Mic,
-  Play,
-  Download,
-  CheckCircle,
-  Volume2,
-  Pause,
-} from "lucide-react";
+import { Send, Mic, Play, Download, Volume2, Pause } from "lucide-react";
 
 type APIResponse = {
   sql_query?: string;
@@ -69,10 +61,11 @@ export function Chatbox() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [processingStage, setProcessingStage] = useState<string>("");
-  const [loadingProgress, setLoadingProgress] = useState<number>(0);
   const [audioLevels, setAudioLevels] = useState<number[]>([
     2, 4, 3, 8, 6, 4, 7, 3, 5, 9, 2, 6,
   ]);
+  const [loadingMessages, setLoadingMessages] = useState<string[]>([]);
+  const [currentMessageIndex, setCurrentMessageIndex] = useState<number>(0);
 
   // TTS state
   const isTTSEnabled = true; // Always enabled since controls are in insights
@@ -371,6 +364,83 @@ export function Chatbox() {
     }
   };
 
+  // Enhanced loading messages for different stages
+  const getLoadingMessages = (stage: string) => {
+    const messageGroups: { [key: string]: string[] } = {
+      transcribing: [
+        "Capturing your voice input",
+        "Analyzing audio patterns",
+        "Converting speech to text",
+        "Processing your message",
+      ],
+      understanding: [
+        "Understanding your request",
+        "Analyzing context and intent",
+        "Preparing data queries",
+        "Focusing on key insights",
+      ],
+      analyzing: [
+        "Connecting to data sources",
+        "Running intelligent analysis",
+        "Processing business metrics",
+        "Generating visualizations",
+      ],
+      generating: [
+        "Crafting your response",
+        "Preparing audio narration",
+        "Adding final insights",
+        "Almost ready to deliver",
+      ],
+    };
+
+    if (stage.includes("Transcribing") || stage.includes("Converting")) {
+      return messageGroups.transcribing;
+    } else if (stage.includes("Understanding") || stage.includes("message")) {
+      return messageGroups.understanding;
+    } else if (stage.includes("analyzing") || stage.includes("Processing")) {
+      return messageGroups.analyzing;
+    } else if (
+      stage.includes("Generating") ||
+      stage.includes("audio") ||
+      stage.includes("Finalizing")
+    ) {
+      return messageGroups.generating;
+    }
+
+    return [
+      "AI is thinking",
+      "Processing your request",
+      "Working on your query",
+      "Getting ready",
+    ];
+  };
+
+  // Function to start the enhanced loading animation
+  const startEnhancedLoader = (stage: string) => {
+    const messages = getLoadingMessages(stage);
+    setLoadingMessages(messages);
+    setCurrentMessageIndex(0);
+
+    // Cycle through messages from bottom to top
+    const interval = setInterval(() => {
+      setCurrentMessageIndex((prevIndex) => {
+        if (prevIndex < messages.length - 1) {
+          return prevIndex + 1;
+        } else {
+          return 0; // Reset to first message
+        }
+      });
+    }, 1500); // Change message every 1.5 seconds
+
+    return interval;
+  };
+
+  // Function to stop the enhanced loader
+  const stopEnhancedLoader = () => {
+    setLoadingMessages([]);
+    setCurrentMessageIndex(0);
+  };
+
   // Function to clean markdown formatting for TTS
   const cleanMarkdownForTTS = (text: string): string => {
     return (
@@ -455,7 +525,6 @@ export function Chatbox() {
 
     try {
       // Start with first stage
-      setLoadingProgress(10);
       setProcessingStage(stages[0]);
 
       // Speak the first step immediately
@@ -471,30 +540,13 @@ export function Chatbox() {
         }
       }, 3000);
 
-      // Update progress every 1.5 seconds
+      // Update stages every 2 seconds
       progressInterval = setInterval(() => {
-        setLoadingProgress((prev) => {
-          if (prev < 90) {
-            const increment = Math.random() * 15 + 5; // Random increment between 5-20%
-            const newProgress = Math.min(prev + increment, 90);
-
-            // Update stage based on progress
-            if (newProgress >= 25 && currentStage === 0) {
-              currentStage = 1;
-              setProcessingStage(stages[1]);
-            } else if (newProgress >= 50 && currentStage === 1) {
-              currentStage = 2;
-              setProcessingStage(stages[2]);
-            } else if (newProgress >= 75 && currentStage === 2) {
-              currentStage = 3;
-              setProcessingStage(stages[3]);
-            }
-
-            return newProgress;
-          }
-          return prev;
-        });
-      }, 1500); // Update every 1.5 seconds
+        if (currentStage < stages.length - 1) {
+          currentStage++;
+          setProcessingStage(stages[currentStage]);
+        }
+      }, 2000); // Update every 2 seconds
 
       const conversationHistory = buildConversationHistory();
 
@@ -512,11 +564,10 @@ export function Chatbox() {
         }
       );
 
-      // Clear the intervals but keep progress at 95% to maintain processing illusion
+      // Clear the intervals
       clearInterval(progressInterval);
       clearInterval(speechInterval);
-      setLoadingProgress(95);
-      setProcessingStage("🎯 Finalizing insights and preparing audio...");
+      setProcessingStage("Finalizing insights and preparing audio");
 
       // Stop any ongoing TTS but don't announce completion
       if (isTTSEnabled) {
@@ -691,16 +742,17 @@ export function Chatbox() {
 
     setMessages((prev) => [...prev, audioMessage]);
     setIsTyping(true);
-    setLoadingProgress(0);
-    setProcessingStage("🎙️ Transcribing audio...");
+    setProcessingStage("Transcribing audio");
+
+    // Start enhanced loader
+    const loaderInterval = startEnhancedLoader("Transcribing audio");
 
     try {
       // Transcribe audio using Whisper
       const formData = new FormData();
       formData.append("audio", audioBlob, "recording.wav");
 
-      setLoadingProgress(20);
-      setProcessingStage("🤖 Converting speech to text...");
+      setProcessingStage("Converting speech to text");
 
       const transcriptionResponse = await axios.post("/api/whisper", formData, {
         headers: {
@@ -709,13 +761,22 @@ export function Chatbox() {
       });
 
       const transcribedText = transcriptionResponse.data.text;
-      setLoadingProgress(40);
-      setProcessingStage("📝 Understanding your message...");
+      setProcessingStage("Understanding your message");
+
+      // Update loader for understanding stage
+      clearInterval(loaderInterval);
+      const understandingLoader = startEnhancedLoader(
+        "Understanding your message"
+      );
 
       // Small delay to show the transcription stage
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
       // Send transcribed text to analysis API
+      setProcessingStage("Analyzing your data");
+      clearInterval(understandingLoader);
+      const analyzingLoader = startEnhancedLoader("Analyzing your data");
+
       const apiResponse = await queryAPI(transcribedText);
 
       let assistantContent = "";
@@ -725,33 +786,41 @@ export function Chatbox() {
         assistantContent = `I heard: "${transcribedText}"\n\nI'm sorry, I couldn't connect to the data server at the moment. Please try again.`;
       }
 
+      setProcessingStage("Generating response");
+      clearInterval(analyzingLoader);
+      const generatingLoader = startEnhancedLoader("✨ Generating response...");
+
       // Stream the response text
       const assistantMessageId = messages.length + 2;
       await streamResponse(assistantContent, apiResponse || undefined);
 
       // Keep loader visible for 2 more seconds while TTS is being prepared
       // Show finalizing stage during the delay
-      setProcessingStage("🎵 Generating audio and finalizing response...");
-      setLoadingProgress(97); // Keep progressing slowly to show ongoing work
+      setProcessingStage("Generating audio and finalizing response");
+      clearInterval(generatingLoader);
+      const finalLoader = startEnhancedLoader(
+        "🎵 Generating audio and finalizing response..."
+      );
 
       setTimeout(() => {
         setIsTyping(false);
         setProcessingStage("");
-        setLoadingProgress(0);
         setRecordingTime(0);
+        clearInterval(finalLoader);
+        stopEnhancedLoader();
 
         // Play pre-generated audio if available
         if (apiResponse?.preGeneratedAudioUrl) {
-          setTimeout(() => {
-            playPreGeneratedAudio(
-              apiResponse.preGeneratedAudioUrl!,
-              assistantMessageId
-            );
-          }, 500); // Small delay before starting audio
+          playPreGeneratedAudio(
+            apiResponse.preGeneratedAudioUrl!,
+            assistantMessageId
+          );
         }
-      }, 2000); // 2-second delay
+      }, 2000);
     } catch (error) {
       console.error("Error processing audio:", error);
+
+      stopEnhancedLoader();
 
       const errorMessage: Message = {
         id: messages.length + 2,
@@ -769,7 +838,6 @@ export function Chatbox() {
       // Handle loader state for error case
       setIsTyping(false);
       setProcessingStage("");
-      setLoadingProgress(0);
       setRecordingTime(0);
     }
   };
@@ -851,11 +919,24 @@ export function Chatbox() {
     setMessages((prev) => [...prev, userMessage]);
     setNewMessage("");
     setIsTyping(true);
-    setLoadingProgress(0);
-    setProcessingStage("🚀 Preparing your request...");
+    setProcessingStage("Preparing your request");
+
+    // Start enhanced loader for text processing
+    const preparingLoader = startEnhancedLoader("🚀 Preparing your request...");
+
+    // Add initial delay to show the preparing stage
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    setProcessingStage("Analyzing your data");
+    clearInterval(preparingLoader);
+    const analyzingLoader = startEnhancedLoader("🔄 Analyzing your data...");
 
     // Query the API
     const apiResponse = await queryAPI(currentQuestion);
+
+    setProcessingStage("Generating insights");
+    clearInterval(analyzingLoader);
+    const generatingLoader = startEnhancedLoader("✨ Generating insights...");
 
     let assistantContent = "";
     if (apiResponse) {
@@ -865,6 +946,10 @@ export function Chatbox() {
       assistantContent =
         "I'm sorry, I couldn't connect to the data server at the moment. This could be due to:\n\n• Network connectivity issues\n• Server temporarily unavailable\n• Request timeout\n\nPlease check your internet connection and try again.";
     }
+
+    setProcessingStage("Preparing audio response");
+    clearInterval(generatingLoader);
+    const finalLoader = startEnhancedLoader("🎵 Preparing audio response...");
 
     const assistantMessage: Message = {
       id: messages.length + 2,
@@ -877,27 +962,27 @@ export function Chatbox() {
       apiData: apiResponse || undefined,
     };
 
-    const messageId = assistantMessage.id;
+    await new Promise((resolve) => setTimeout(resolve, 800)); // Small delay for final stage
 
     setMessages((prev) => [...prev, assistantMessage]);
 
-    // Keep loader visible for 2 more seconds while TTS is being prepared
-    // Show finalizing stage during the delay
-    setProcessingStage("🎵 Generating audio and finalizing response...");
-    setLoadingProgress(97); // Keep progressing slowly to show ongoing work
-
+    // Keep loader visible for a moment while TTS is being prepared
     setTimeout(() => {
       setIsTyping(false);
-      setLoadingProgress(0);
       setProcessingStage("");
+      clearInterval(finalLoader);
+      stopEnhancedLoader();
 
       // Play pre-generated audio if available
       if (apiResponse?.preGeneratedAudioUrl) {
         setTimeout(() => {
-          playPreGeneratedAudio(apiResponse.preGeneratedAudioUrl!, messageId);
+          playPreGeneratedAudio(
+            apiResponse.preGeneratedAudioUrl!,
+            assistantMessage.id
+          );
         }, 500); // Small delay before starting audio
       }
-    }, 2000); // 2-second delay
+    }, 1500);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -911,6 +996,14 @@ export function Chatbox() {
     <div className="h-full flex flex-col overflow-hidden bg-gray-50">
       <style jsx>{`
         @keyframes slideRight {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(400%);
+          }
+        }
+        @keyframes shimmer {
           0% {
             transform: translateX(-100%);
           }
@@ -1320,7 +1413,6 @@ export function Chatbox() {
               )}
             </div>
           ))}
-
           {/* Recording Indicator */}
           {isRecording && (
             <div className="flex gap-4">
@@ -1366,11 +1458,10 @@ export function Chatbox() {
               </Card>
             </div>
           )}
-
-          {/* Simplified Typing Indicator */}
+          {/* Modern Professional Loading Indicator */}
           {isTyping && (
             <div className="flex gap-4">
-              <Avatar className="h-10 w-10 mt-1 ring-2 ring-blue-200 shadow-lg animate-pulse">
+              <Avatar className="h-10 w-10 mt-1 ring-2 ring-blue-100 shadow-md">
                 <AvatarImage src="/ai_avatar.jpg" />
                 <AvatarFallback
                   style={{ backgroundColor: "#b6735c", color: "white" }}
@@ -1378,96 +1469,56 @@ export function Chatbox() {
                   AI
                 </AvatarFallback>
               </Avatar>
-              <Card
-                className="p-4 shadow-lg border-0 min-w-[300px] relative overflow-hidden"
-                style={{
-                  backgroundColor: "white",
-                  borderLeft: "4px solid #b6735c",
-                }}
-              >
-                {/* Animated background gradient */}
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 opacity-30 animate-pulse"></div>
 
-                <div className="relative z-10 space-y-3">
-                  {/* Main status text */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-800">
-                      {processingStage || "Processing your request..."}
-                    </span>
-                    {loadingProgress === 100 && (
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                    )}
+              <div className="bg-white rounded-xl p-6 shadow-md border border-gray-100 min-w-[320px] max-w-[400px]">
+                <div className="flex items-start space-x-4">
+                  {/* Modern Spinner */}
+                  <div className="relative flex-shrink-0 mt-1">
+                    <div className="w-6 h-6 relative">
+                      {/* Outer ring */}
+                      <div className="absolute inset-0 border-2 border-gray-100 rounded-full"></div>
+                      {/* Spinning arc */}
+                      <div className="absolute inset-0 border-2 border-transparent border-t-blue-500 rounded-full animate-spin"></div>
+                      {/* Inner dot */}
+                      <div className="absolute inset-2 bg-blue-500 rounded-full opacity-20"></div>
+                    </div>
                   </div>
 
-                  {/* Slim Progress Bar */}
-                  <div className="space-y-2">
-                    <div className="w-full bg-gray-200 rounded-full h-1 overflow-hidden shadow-inner">
-                      <div
-                        className="h-1 rounded-full transition-all duration-500 ease-out relative overflow-hidden"
-                        style={{
-                          width: `${loadingProgress}%`,
-                          backgroundColor:
-                            loadingProgress === 100 ? "#10b981" : "#b6735c",
-                        }}
-                      >
-                        {/* Moving highlight */}
-                        {loadingProgress < 100 && (
-                          <div
-                            className="absolute top-0 left-0 h-full w-6 opacity-60 animate-pulse"
-                            style={{
-                              background:
-                                "linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent)",
-                            }}
-                          />
-                        )}
-                      </div>
+                  {/* Loading content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-gray-900 font-semibold text-base leading-tight mb-3">
+                      {processingStage || "Processing your request"}
                     </div>
 
-                    {/* 4 Main progress indicators */}
-                    <div className="flex justify-between text-xs text-gray-400">
-                      <span
-                        className={
-                          loadingProgress >= 25
-                            ? "text-blue-500 font-medium"
-                            : ""
-                        }
-                      >
-                        Processing
-                      </span>
-                      <span
-                        className={
-                          loadingProgress >= 50
-                            ? "text-blue-500 font-medium"
-                            : ""
-                        }
-                      >
-                        Analyzing
-                      </span>
-                      <span
-                        className={
-                          loadingProgress >= 75
-                            ? "text-blue-500 font-medium"
-                            : ""
-                        }
-                      >
-                        Generating
-                      </span>
-                      <span
-                        className={
-                          loadingProgress >= 100
-                            ? "text-blue-500 font-medium"
-                            : ""
-                        }
-                      >
-                        Preparing
-                      </span>
+                    {/* Dynamic message stack with bottom-to-top animation */}
+                    <div className="space-y-2 min-h-[48px] flex flex-col justify-end">
+                      {loadingMessages.map((message, index) => (
+                        <div
+                          key={index}
+                          className={`text-sm leading-relaxed transition-all duration-500 ease-out transform ${
+                            index <= currentMessageIndex
+                              ? "translate-y-0 opacity-100"
+                              : "translate-y-2 opacity-0"
+                          } ${
+                            index === currentMessageIndex
+                              ? "text-blue-600 font-medium"
+                              : index < currentMessageIndex
+                              ? "text-gray-500 opacity-70"
+                              : ""
+                          }`}
+                          style={{
+                            transitionDelay: `${index * 150}ms`,
+                          }}
+                        >
+                          {message}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
-              </Card>
+              </div>
             </div>
-          )}
-
+          )}{" "}
           <div ref={messagesEndRef} />
         </div>
       </ScrollArea>
